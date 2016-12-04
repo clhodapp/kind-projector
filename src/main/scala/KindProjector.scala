@@ -132,15 +132,28 @@ class KindRewriter(plugin: Plugin, val global: Global)
       TypeDef(Modifiers(PARAM | CONTRAVARIANT), makeTypeName(name), Nil, bounds)
 
     def polyLambda(tree: Tree): Tree = tree match {
-      case PolyLambda(methodName, (arrowType @ UnappliedType(_ :: targs)) :: Nil, Function1Tree(name, body)) =>
-        val (f, g) = targs match {
-          case a :: b :: Nil => (a, b)
-          case a :: Nil      => (a, a)
-          case _             => return tree
+      case PolyLambda(methodName, (UnappliedType(arrowType :: targs)) :: Nil, Function1Tree(name, body)) =>
+        val (f, g, tParam, tArg) = targs match {
+          case UnappliedType(a :: Ident(nme) :: Nil) :: b :: Nil => {
+            (a, b, nme.toTypeName, nme.toTypeName)
+          }
+          case a :: b :: Nil                                     => {
+            val anon = newTypeName(freshName("A"))
+            (a, b, anon, anon)
+          }
+          case UnappliedType(a :: Ident(nme) :: Nil) :: Nil      => {
+            (a, a, nme.toTypeName, nme.toTypeName)
+          }
+          case a :: Nil                                          => {
+            val anon = newTypeName(freshName("A"))
+            (a, a, anon, anon)
+          }
+          case _                                                 => {
+            return tree
+          }
         }
-        val TParam = newTypeName(freshName("A"))
         atPos(tree.pos.makeTransparent)(
-          q"new $arrowType { def $methodName[$TParam]($name: $f[$TParam]): $g[$TParam] = $body }"
+          q"new $arrowType[$f, $g] { def $methodName[$tParam]($name: $f[$tArg]): $g[$tArg] = $body }"
         )
       case _ => tree
     }
