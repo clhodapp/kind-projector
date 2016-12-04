@@ -111,6 +111,7 @@ class KindRewriter(plugin: Plugin, val global: Global)
     val AnyUpper = gen.rootScalaDot(tpnme.Any)
     val AnyRefBase = gen.rootScalaDot(tpnme.AnyRef)
     val DefaultBounds = TypeBoundsTree(NothingLower, AnyUpper)
+    val EmptyBounds = TypeBoundsTree(EmptyTree, EmptyTree)
 
     // Handy way to make a TypeName from a Name.
     def makeTypeName(name: Name): TypeName =
@@ -133,27 +134,45 @@ class KindRewriter(plugin: Plugin, val global: Global)
 
     def polyLambda(tree: Tree): Tree = tree match {
       case PolyLambda(methodName, (UnappliedType(arrowType :: targs)) :: Nil, Function1Tree(name, body)) =>
-        val (f, g, tParam, tArg) = targs match {
-          case UnappliedType(a :: Ident(nme) :: Nil) :: b :: Nil => {
-            (a, b, nme.toTypeName, nme.toTypeName)
+        val (f, g, tParams, fTArgs, gTArgs) = targs match {
+          case UnappliedType(a :: fromA) :: UnappliedType(b :: fromB) :: Nil => {
+            val aNames = fromA.collect { case Ident(t@TypeName(_)) => t}
+            val bNames = fromB.collect { case Ident(t@TypeName(_)) => t}
+            val params = (aNames ++ bNames).distinct.map(makeTypeParam(_, bounds = EmptyBounds))
+            val aArgs = aNames.map(Ident(_))
+            val bArgs = bNames.map(Ident(_))
+            (a, b, params, aArgs, bArgs)
+          }
+          case UnappliedType(a :: fromA) :: b :: Nil => {
+            val aNames = fromA.collect { case Ident(t@TypeName(_)) => t}
+            val params = aNames.map(makeTypeParam(_, bounds = EmptyBounds))
+            val aArgs = aNames.map(Ident(_))
+            (a, b, params, aArgs, aArgs)
           }
           case a :: b :: Nil                                     => {
-            val anon = newTypeName(freshName("A"))
-            (a, b, anon, anon)
+            val anon = List(newTypeName(freshName("A")))
+            val params = anon.map(makeTypeParam(_, bounds = EmptyBounds))
+            val args = anon.map(Ident(_))
+            (a, b, params, args, args)
           }
-          case UnappliedType(a :: Ident(nme) :: Nil) :: Nil      => {
-            (a, a, nme.toTypeName, nme.toTypeName)
+          case UnappliedType(a :: fromA) :: Nil      => {
+            val aNames = fromA.collect { case Ident(t@TypeName(_)) => t}
+            val params = aNames.map(makeTypeParam(_, bounds = EmptyBounds))
+            val aArgs = aNames.map(Ident(_))
+            (a, a, params, aArgs, aArgs)
           }
           case a :: Nil                                          => {
-            val anon = newTypeName(freshName("A"))
-            (a, a, anon, anon)
+            val anon = List(newTypeName(freshName("A")))
+            val params = anon.map(makeTypeParam(_, bounds = EmptyBounds))
+            val args = anon.map(Ident(_))
+            (a, a, params, args, args)
           }
           case _                                                 => {
             return tree
           }
         }
         atPos(tree.pos.makeTransparent)(
-          q"new $arrowType[$f, $g] { def $methodName[$tParam]($name: $f[$tArg]): $g[$tArg] = $body }"
+          q"new $arrowType[$f, $g] { def $methodName[..$tParams]($name: $f[..$fTArgs]): $g[..$gTArgs] = $body }"
         )
       case _ => tree
     }
